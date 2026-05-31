@@ -487,7 +487,7 @@ function save() {
   } catch(e) { console.error("Erro ao salvar:", e); }
 }
 
-function load() {
+function load () {
   try {
     const r = localStorage.getItem(keyFor());
     if (r) App.state = Object.assign(App.state, JSON.parse(r));
@@ -499,7 +499,7 @@ function load() {
           localStorage.setItem(keyFor(), JSON.stringify(App.state));
           if (typeof render === 'function') render();
         }
-      }).catch((e) => console.error("Erro ao carregar do Firebase:", e));
+           }).catch((e) => console.error("Erro ao carregar do Firebase:", e));
     }
     
         if (!App.state.goals) App.state.goals = {day:0, week:0, month:0, ts:''};
