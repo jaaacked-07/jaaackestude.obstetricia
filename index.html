@@ -489,17 +489,23 @@ function save() {
 
 function load() {
   try {
-    // Carrega localmente primeiro
     const r = localStorage.getItem(keyFor());
     if (r) App.state = Object.assign(App.state, JSON.parse(r));
     
-    // Busca e carrega os dados atualizados da nuvem
     if (App.user && App.user !== 'guest') {
       db.collection("obstetricia").doc(App.user).get().then((docSnap) => {
         if (docSnap.exists) {
           App.state = Object.assign(App.state, docSnap.data());
           localStorage.setItem(keyFor(), JSON.stringify(App.state));
           if (typeof render === 'function') render();
+        }
+      }).catch((e) => console.error("Erro ao carregar do Firebase:", e));
+    }
+    
+    if (!App.state.goals) App.state.goals = {day:0, week:0, month:0, ts:''};
+  } catch(e) { console.error("Erro geral no load:", e); }
+}
+
         }
       }).catch((e) => console.error("Erro ao carregar do Firebase:", e));
     }
