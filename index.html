@@ -3101,6 +3101,15 @@ MODULES.push({id:'m10',num:10,tag:'10',title:'Puerpério',color:'#ec4899',subtit
   $('#search').addEventListener('focus',function(e){ if(e.target.value)doSearch(e.target.value); });
   document.addEventListener('keydown',function(e){ if(e.key==='/'&&document.activeElement!==$('#search')&&$('#app').classList.contains('on')){ e.preventDefault(); $('#search').focus(); } if(e.key==='Escape'){$('#searchPop').classList.remove('on'); closeDrawer();} });
 })();
+  const firebaseConfig = {
+  apiKey: "AIzaSyAKN3qsYIc3pel81vl8WEAH6Ob4oR-icAM",
+  authDomain: "jackeline-study-platform.firebaseapp.com",
+  projectId: "jackeline-study-platform",
+  storageBucket: "jackeline-study-platform.firebasestorage.app",
+  messagingSenderId: "574246127117",
+  appId: "1:574246127117:web:29eedab81ea4251b23f744"
+};
+window.CG_AUTH_DOMAIN = "jackeline-study-platform.firebaseapp.com";
 </script>
 </body>
 </html>
