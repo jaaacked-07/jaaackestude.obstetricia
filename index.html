@@ -399,26 +399,6 @@ mark.hl-y{background:var(--hl-y)} mark.hl-g{background:var(--hl-g)} mark.hl-b{ba
 @media(min-width:781px){ .menu-btn{display:none} }
 </style>
 </head>
-  const firebaseConfig = {
-  apiKey: "AIzaSyAKN3qsYIc3pel81vl8WEAH6Ob4oR-icAM",
-  authDomain: "jackeline-study-platform.firebaseapp.com",
-  projectId: "jackeline-study-platform",
-  storageBucket: "jackeline-study-platform.firebasestorage.app",
-  messagingSenderId: "574246127117",
-  appId: "1:574246127117:web:29eedab81ea4251b23f744"
-};
-
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
-const db = getFirestore(firebaseApp);
-
-await signInAnonymously(auth);
-
-window.db = db;
-window.firestoreDoc = doc;
-window.firestoreGetDoc = getDoc;
-window.firestoreSetDoc = setDoc;
-</script>
 <body>
 
 <!-- ===================== LOGIN ===================== -->
@@ -498,37 +478,9 @@ const App={
   flat:[], // flattened topics
 };
 function keyFor(){ return 'obsterPRO::'+(App.user||'guest'); }
-  
- function save(){
-  localStorage.setItem(
-    keyFor(),
-    JSON.stringify(App.state)
-  );
-}
-  
-  function load(){
-
-  try{
-
-    const local =
-      localStorage.getItem(keyFor());
-
-    if(local){
-      App.state = Object.assign(
-        App.state,
-        JSON.parse(local)
-      );
-    }
-
-  }catch(e){}
-
-  if(!App.state.goals)
-    App.state.goals={day:0,week:0,month:0,ts:''};
-}
-  
-  }catch(e){}
-}
-
+function save(){ try{ localStorage.setItem(keyFor(), JSON.stringify(App.state)); }catch(e){} try{ if(typeof cloudSave==='function') cloudSave(); }catch(e){} }
+function load(){
+  try{ const r=localStorage.getItem(keyFor()); if(r) App.state=Object.assign(App.state,JSON.parse(r)); }catch(e){}
   if(!App.state.goals) App.state.goals={day:0,week:0,month:0,ts:''};
 }
 
@@ -720,6 +672,7 @@ function setActive(route){
 
 /* ---------- ROUTER ---------- */
 function go(route, sub){
+  App.route=route;
   closeDrawer();
   if(route.startsWith('mod:')){ renderModule(route.slice(4)); setActive(route); }
   else if(route.startsWith('topic:')){ renderTopic(route.slice(6)); setActive('mod:'+(topicById(route.slice(6))||{})._mod?.id); }
@@ -3125,6 +3078,107 @@ MODULES.push({id:'m10',num:10,tag:'10',title:'Puerpério',color:'#ec4899',subtit
 }
 ]});
 </script>
+<!-- ===== FIREBASE SDK (compat) — sincronização em nuvem ===== -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* =========================================================
+   CAMADA DE SINCRONIZAÇÃO FIREBASE (Auth + Firestore)
+   - localStorage = cache/fallback (offline-first)
+   - Firestore = fonte da verdade quando online
+   ========================================================= */
+var FIRECFG={apiKey:"AIzaSyAKN3qsYIc3pel81vl8WEAH6Ob4oR-icAM",authDomain:"jackeline-study-platform.firebaseapp.com",projectId:"jackeline-study-platform",storageBucket:"jackeline-study-platform.firebasestorage.app",messagingSenderId:"574246127117",appId:"1:574246127117:web:29eedab81ea4251b23f744"};
+var FB={ready:false,db:null,auth:null,uid:null,unsub:null,localWriteTs:0};
+(function initFirebase(){
+  try{
+    if(typeof firebase==='undefined'){ console.warn('[Sync] SDK Firebase indisponível (offline?). Usando apenas cache local.'); return; }
+    if(!firebase.apps||!firebase.apps.length){ firebase.initializeApp(FIRECFG); }
+    FB.auth=firebase.auth(); FB.db=firebase.firestore();
+    try{ FB.db.enablePersistence({synchronizeTabs:true}).catch(function(){}); }catch(e){}
+    try{ FB.auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){}); }catch(e){}
+    FB.ready=true;
+    console.log('[Sync] Firebase inicializado.');
+  }catch(e){ console.warn('[Sync] Falha ao inicializar Firebase; usando cache local.', e); FB.ready=false; }
+})();
+/* Camada de compatibilidade: login só com usuário -> e-mail/senha determinísticos */
+function credFor(u){
+  var slug=(u||'guest').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'')||'guest';
+  return { slug:slug, email:'user_'+slug+'@jackeline-study-platform.web.app', password:'OBPRO__'+slug+'__v1_sync_secret' };
+}
+function mergeState(local, remote){
+  var base={checks:{},finals:{},notes:{},highlights:{},answered:{},cards:{},hardCards:[],goals:{day:0,week:0,month:0,ts:''},journeySeen:0};
+  return Object.assign(base, local||{}, remote||{});
+}
+function refreshAfterSync(){
+  try{
+    var ae=document.activeElement;
+    if(ae&&ae.classList&&ae.classList.contains('notes-area')) return; /* não interromper digitação de anotações */
+    if(typeof App.route==='string' && App.route){ go(App.route); }
+  }catch(e){}
+}
+async function cloudInit(u){
+  if(!FB.ready){ return; } /* offline / sem SDK -> segue com localStorage já carregado */
+  var c=credFor(u);
+  /* 1) Autenticar; se a conta não existir, criar automaticamente */
+  try{
+    await FB.auth.signInWithEmailAndPassword(c.email,c.password);
+  }catch(err){
+    var code=err&&err.code;
+    if(code==='auth/user-not-found'||code==='auth/invalid-credential'||code==='auth/invalid-login-credentials'){
+      try{ await FB.auth.createUserWithEmailAndPassword(c.email,c.password); }
+      catch(e2){
+        if(e2&&e2.code==='auth/email-already-in-use'){ try{ await FB.auth.signInWithEmailAndPassword(c.email,c.password); }catch(e3){ console.warn('[Sync] não autenticou; usando cache local.', e3); return; } }
+        else { console.warn('[Sync] criação de conta falhou; usando cache local.', e2); return; }
+      }
+    } else { console.warn('[Sync] login falhou; usando cache local.', err); return; }
+  }
+  FB.uid=(FB.auth.currentUser&&FB.auth.currentUser.uid)||null;
+  if(!FB.uid){ return; }
+  var ref=FB.db.collection('progress').doc(FB.uid);
+  /* 2) Carregar primeiro do Firestore; se não existir, criar a partir do cache local */
+  try{
+    var snap=await ref.get();
+    if(snap.exists){
+      var data=snap.data();
+      if(data&&data.state){
+        App.state=mergeState(App.state, data.state);
+        try{ localStorage.setItem(keyFor(), JSON.stringify(App.state)); }catch(e){}
+        if(typeof ensureGoalDay==='function') ensureGoalDay();
+        refreshAfterSync();
+      }
+    } else {
+      FB.localWriteTs=Date.now();
+      await ref.set({user:u, slug:c.slug, state:App.state, updatedAt:FB.localWriteTs});
+    }
+  }catch(e){ console.warn('[Sync] leitura inicial falhou; mantendo cache local.', e); }
+  /* 3) Sincronização em tempo real entre aparelhos (computador/celular/tablet) */
+  try{
+    if(FB.unsub){ try{ FB.unsub(); }catch(e){} }
+    FB.unsub=ref.onSnapshot(function(doc){
+      if(!doc||!doc.exists) return;
+      var d=doc.data(); if(!d||!d.state) return;
+      if(d.updatedAt&&FB.localWriteTs&&d.updatedAt<=FB.localWriteTs) return; /* ignora eco da própria escrita */
+      App.state=mergeState(App.state, d.state);
+      try{ localStorage.setItem(keyFor(), JSON.stringify(App.state)); }catch(e){}
+      refreshAfterSync();
+    }, function(err){ console.warn('[Sync] onSnapshot:', err); });
+  }catch(e){}
+}
+/* Grava na nuvem (debounced). Chamado por save() após o localStorage. */
+var _cloudTimer=null;
+function cloudSave(){
+  if(!FB.ready||!FB.uid||!App.user){ return; }
+  clearTimeout(_cloudTimer);
+  _cloudTimer=setTimeout(function(){
+    try{
+      FB.localWriteTs=Date.now();
+      FB.db.collection('progress').doc(FB.uid).set({user:App.user, state:App.state, updatedAt:FB.localWriteTs},{merge:true})
+        .catch(function(e){ console.warn('[Sync] gravação na nuvem falhou (mantido localmente):', e); });
+    }catch(e){ console.warn('[Sync] exceção ao gravar na nuvem:', e); }
+  },800);
+}
+</script>
 <script>
 (function(){
   var th='dark'; try{ th=localStorage.getItem('obsterPRO_theme')||'dark'; }catch(e){}
@@ -3133,79 +3187,23 @@ MODULES.push({id:'m10',num:10,tag:'10',title:'Puerpério',color:'#ec4899',subtit
   var lastUser=(function(){try{return localStorage.getItem('obsterPRO_lastUser')||'';}catch(e){return'';}})();
   if(lastUser) $('#userInput').value=lastUser;
   $('#loginForm').onsubmit=function(e){ e.preventDefault(); var u=$('#userInput').value.trim()||'Estudante'; enter(u); };
-  
-    async function enter(u){
-
-  App.user=u;
-
-  try{
-    localStorage.setItem('obsterPRO_lastUser',u);
-  }catch(e){}
-
-  await load();
-
-  buildIndex();
-  ensureGoalDay();
-
-  $('#login').classList.add('hide');
-  setTimeout(function(){
-    $('#login').style.display='none';
-  },520);
-
-  $('#app').classList.add('on');
-
-  renderSidebar();
-  initHighlighter();
-
-  $('#userBtn').innerHTML=
-  '<div style="width:28px;height:28px;border-radius:9px;background:var(--grad-brand);display:grid;place-items:center;color:#fff;font-weight:800">'+
-  u.charAt(0).toUpperCase()+
-  '</div>';
-
-  $('#userBtn').onclick=function(){
-    go('backup');
-  };
-
-  App.state.journeySeen=
-    App.state.journeySeen || overallPct();
-
-  go('dashboard');
-}
-   
+  async function enter(u){
+    App.user=u; try{localStorage.setItem('obsterPRO_lastUser',u);}catch(e){}
+    load(); buildIndex(); ensureGoalDay();
+    $('#login').classList.add('hide'); setTimeout(function(){$('#login').style.display='none';},520);
+    $('#app').classList.add('on');
+    renderSidebar(); initHighlighter();
+    $('#userBtn').innerHTML='<div style="width:28px;height:28px;border-radius:9px;background:var(--grad-brand);display:grid;place-items:center;color:#fff;font-weight:800;font-size:.85rem">'+esc(u[0].toUpperCase())+'</div>';
+    $('#userBtn').onclick=function(){go('backup');};
+    App.state.journeySeen=App.state.journeySeen||overallPct();
+    go('dashboard');
+    try{ await cloudInit(u); }catch(e){ console.warn('Cloud init falhou, seguindo com cache local:', e); }
+  }
   $('#menuBtn').onclick=openDrawer; $('#backdrop').onclick=closeDrawer;
   $('#search').addEventListener('input',function(e){doSearch(e.target.value);});
   $('#search').addEventListener('focus',function(e){ if(e.target.value)doSearch(e.target.value); });
   document.addEventListener('keydown',function(e){ if(e.key==='/'&&document.activeElement!==$('#search')&&$('#app').classList.contains('on')){ e.preventDefault(); $('#search').focus(); } if(e.key==='Escape'){$('#searchPop').classList.remove('on'); closeDrawer();} });
 })();
-  
 </script>
-  <script type="module">
-
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyAKN3qsYIc3pel81vl8WEAH6Ob4oR-icAM",
-  authDomain: "jackeline-study-platform.firebaseapp.com",
-  projectId: "jackeline-study-platform",
-  storageBucket: "jackeline-study-platform.firebasestorage.app",
-  messagingSenderId: "574246127117",
-  appId: "1:574246127117:web:29eedab81ea4251b23f744"
-};
-
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
-const db = getFirestore(firebaseApp);
-
-await signInAnonymously(auth);
-
-window.db = db;
-window.firestoreDoc = doc;
-window.firestoreGetDoc = getDoc;
-window.firestoreSetDoc = setDoc;
-
-    </script>
-  
 </body>
 </html>
