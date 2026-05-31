@@ -498,51 +498,20 @@ const App={
   flat:[], // flattened topics
 };
 function keyFor(){ return 'obsterPRO::'+(App.user||'guest'); }
-  async function save(){
-
-  try{
-    localStorage.setItem(keyFor(), JSON.stringify(App.state));
-
-    if(!window.db || !App.user) return;
-
-    await firestoreSetDoc(
-      firestoreDoc(window.db,"users",App.user),
-      {
-        state: App.state,
-        updatedAt: Date.now()
-      }
-    );
-
-  }catch(e){
-    console.error(e);
-  }
+  
+ function save(){
+  localStorage.setItem(
+    keyFor(),
+    JSON.stringify(App.state)
+  );
 }
   
-  async function load(){
+  function load(){
 
   try{
 
-    const snap = await firestoreGetDoc(
-      firestoreDoc(window.db,"users",App.user)
-    );
-
-    if(snap.exists()){
-
-      App.state = Object.assign(
-        App.state,
-        snap.data().state || {}
-      );
-
-      return;
-    }
-
-  }catch(e){
-    console.error(e);
-  }
-
-  try{
-
-    const local = localStorage.getItem(keyFor());
+    const local =
+      localStorage.getItem(keyFor());
 
     if(local){
       App.state = Object.assign(
@@ -551,6 +520,12 @@ function keyFor(){ return 'obsterPRO::'+(App.user||'guest'); }
       );
     }
 
+  }catch(e){}
+
+  if(!App.state.goals)
+    App.state.goals={day:0,week:0,month:0,ts:''};
+}
+  
   }catch(e){}
 }
 
