@@ -502,7 +502,7 @@ function load() {
       }).catch((e) => console.error("Erro ao carregar do Firebase:", e));
     }
     
-    if (!App.state.goals) App.state.goals = {day:0, week:0, month:0, ts:''};
+        if (!App.state.goals) App.state.goals = {day:0, week:0, month:0, ts:''};
   } catch(e) { console.error("Erro geral no load:", e); }
 }
   $('#themeBtn').innerHTML = t==='dark'
