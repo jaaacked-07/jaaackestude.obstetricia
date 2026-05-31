@@ -478,12 +478,35 @@ const App={
   flat:[], // flattened topics
 };
 function keyFor(){ return 'obsterPRO::'+(App.user||'guest'); }
-function save(){ try{ localStorage.setItem(keyFor(), JSON.stringify(App.state)); }catch(e){} }
-function load(){
-  try{ const r=localStorage.getItem(keyFor()); if(r) App.state=Object.assign(App.state,JSON.parse(r)); }catch(e){}
-  if(!App.state.goals) App.state.goals={day:0,week:0,month:0,ts:''};
+function save() {
+  try {
+    // Salva localmente
+    localStorage.setItem(keyFor(), JSON.stringify(App.state));
+    
+    // Envia para o Firebase
+    if (App.user && App.user !== 'guest') {
+      db.collection("obstetricia").doc(App.user).set(App.state);
+    }
+  } catch(e) { console.error("Erro ao salvar:", e); }
 }
 
+function load() {
+  try {
+    // Carrega localmente primeiro
+    const r = localStorage.getItem(keyFor());
+    if (r) App.state = Object.assign(App.state, JSON.parse(r));
+    
+    // Busca e carrega os dados atualizados da nuvem
+    if (App.user && App.user !== 'guest') {
+      db.collection("obstetricia").doc(App.user).get().then((docSnap) => {
+        if (docSnap.exists) {
+          App.state = Object.assign(App.state, docSnap.data());
+          localStorage.setItem(keyFor(), JSON.stringify(App.state));
+          if (typeof render === 'function') render();
+        }
+      }).catch((e) => console.error("Erro ao carregar do Firebase:", e));
+    if (!App.state.goals) App.state.goals = {day:0, week:0, month:0, ts:''};
+  } catch(e) { console.error("Erro geral no load:", e); }
 /* ---------- THEME ---------- */
 function setTheme(t){
   App.theme=t; document.documentElement.setAttribute('data-theme',t);
@@ -3109,6 +3132,7 @@ MODULES.push({id:'m10',num:10,tag:'10',title:'Puerpério',color:'#ec4899',subtit
   messagingSenderId: "574246127117",
   appId: "1:574246127117:web:29eedab81ea4251b23f744"
 };
+  const db = firebase.firestore();
 window.CG_AUTH_DOMAIN = "jackeline-study-platform.firebaseapp.com";
 </script>
 </body>
