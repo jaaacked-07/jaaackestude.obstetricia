@@ -480,10 +480,7 @@ const App={
 function keyFor(){ return 'obsterPRO::'+(App.user||'guest'); }
 function save() {
   try {
-    // Salva localmente
     localStorage.setItem(keyFor(), JSON.stringify(App.state));
-    
-    // Envia para o Firebase
     if (App.user && App.user !== 'guest') {
       db.collection("obstetricia").doc(App.user).set(App.state);
     }
