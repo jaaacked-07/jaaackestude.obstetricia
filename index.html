@@ -3200,6 +3200,16 @@ var FB={ready:false,db:null,auth:null,uid:null,unsub:null,localWriteTs:0};
     console.log('[Sync] Firebase inicializado.');
   }catch(e){ console.warn('[Sync] Falha ao inicializar Firebase; usando cache local.', e); FB.ready=false; }
 })();
+/* ============================================================
+   ISOLAMENTO POR PLATAFORMA (correção do "sumiço/mistura" das anotações)
+   >>> Em CADA plataforma, troque APENAS o valor abaixo. <<<
+   Ex.: 'cirurgia-geral', 'ginecologia', 'psiquiatria', ...
+   Cada plataforma ganha a sua própria "gaveta" e nunca mais
+   sobrescreve nem mistura os dados das outras.
+   ============================================================ */
+var PLATFORM_ID='obstetricia';
+function platformRef(){ return FB.db.collection('users').doc(FB.uid).collection('platforms').doc(PLATFORM_ID); }
+
 /* Camada de compatibilidade: login só com usuário -> e-mail/senha determinísticos */
 function credFor(u){
   var slug=(u||'guest').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'')||'guest';
@@ -3234,7 +3244,7 @@ async function cloudInit(u){
   }
   FB.uid=(FB.auth.currentUser&&FB.auth.currentUser.uid)||null;
   if(!FB.uid){ return; }
-  var ref=FB.db.collection('progress').doc(FB.uid);
+  var ref=platformRef();
   /* 2) Carregar primeiro do Firestore; se não existir, criar a partir do cache local */
   try{
     var snap=await ref.get();
@@ -3272,7 +3282,7 @@ function cloudSave(){
   _cloudTimer=setTimeout(function(){
     try{
       FB.localWriteTs=Date.now();
-      FB.db.collection('progress').doc(FB.uid).set({user:App.user, state:App.state, updatedAt:FB.localWriteTs},{merge:true})
+      platformRef().set({user:App.user, state:App.state, updatedAt:FB.localWriteTs},{merge:true})
         .catch(function(e){ console.warn('[Sync] gravação na nuvem falhou (mantido localmente):', e); });
     }catch(e){ console.warn('[Sync] exceção ao gravar na nuvem:', e); }
   },800);
