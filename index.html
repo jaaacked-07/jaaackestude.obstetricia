@@ -3466,5 +3466,331 @@ function cloudSave(){
   document.addEventListener('keydown',function(e){ if(e.key==='/'&&document.activeElement!==$('#search')&&$('#app').classList.contains('on')){ e.preventDefault(); $('#search').focus(); } if(e.key==='Escape'){$('#searchPop').classList.remove('on'); closeDrawer();} });
 })();
 </script>
+<script>
+/* ---- Flashcards Inteligentes: configuração da plataforma OBSTETRÍCIA ---- */
+window.FC_CFG = {
+  getState: function(){ return App.state; },
+  save: function(){ try{ save(); }catch(e){} },
+  meta: function(id){ var t=null; try{ t=topicById(id); }catch(e){} var mod=(t&&t._mod&&t._mod.title)?t._mod.title:'Obstetrícia'; return t?{title:(t.title||id), mod:mod}:{title:id, mod:'Obstetrícia'}; },
+  reward: function(label){ /* Obstetrícia não usa XP; gamificação é por progresso/checks */ },
+  toast: function(title, sub){ try{ if(typeof toast==='function') toast(title+(sub?(' — '+sub):'')); }catch(e){} },
+  panelHost: function(){ var v=document.getElementById('main'); if(!v) return null; var before=v.querySelector('.tp-status')||v.querySelector('.panel'); return {host:v, before:before}; },
+  installHook: function(mount){ if(typeof renderTopic==='function'){ var _o=renderTopic; renderTopic=function(id){ _o(id); try{ mount(id); }catch(e){} }; } }
+};
+
+/* ============================================================
+   FLASHCARDS INTELIGENTES — módulo compartilhado (aditivo)
+   Depende apenas de window.FC_CFG (definido por cada plataforma).
+   NÃO altera nada existente: cria suas próprias funções/estilos.
+   ============================================================ */
+(function(){
+  if(window.__FCX_LOADED__) return; window.__FCX_LOADED__=true;
+  var CFG = window.FC_CFG || {};
+  function S(){ try{ return CFG.getState ? CFG.getState() : null; }catch(e){ return null; } }
+  function save(){ try{ if(CFG.save) CFG.save(); }catch(e){} }
+  function meta(id){ try{ return (CFG.meta && CFG.meta(id)) || {title:id,mod:''}; }catch(e){ return {title:id,mod:''}; } }
+  function reward(l){ try{ if(CFG.reward) CFG.reward(l); }catch(e){} }
+  function ptoast(t,s){ try{ if(CFG.toast) CFG.toast(t,s); }catch(e){} }
+
+  function fq(s,c){ return (c||document).querySelector(s); }
+  function fa(s,c){ return Array.prototype.slice.call((c||document).querySelectorAll(s)); }
+  function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function safeUrl(u){ u=(u||'').trim(); return /^https?:\/\//i.test(u)?u:''; }
+
+  /* ---- dados ---- */
+  function UC(){ var s=S(); if(!s) return {}; if(!s.userCards) s.userCards={}; return s.userCards; }
+  function STT(){ var s=S(); if(!s) return {created:0,reviewed:0}; if(!s.fcStats) s.fcStats={created:0,reviewed:0}; return s.fcStats; }
+  function arr(){ var u=UC(); return Object.keys(u).map(function(k){ return u[k]; }); }
+  function forTopic(id){ return arr().filter(function(c){ return c.topicId===id; }); }
+  function mastered(c){ return (c.interval||0)>=21; }
+  function due(c){ return (c.due||0)<=Date.now(); }
+  function dueCards(){ return arr().filter(due).sort(function(a,b){ return (a.due||0)-(b.due||0); }); }
+  function tStats(id){ var a=forTopic(id); return {total:a.length, dom:a.filter(mastered).length, pend:a.filter(due).length}; }
+
+  function createCard(data){
+    var s=S(); if(!s){ ptoast('Faça login','Entre na sua conta para salvar flashcards.'); return null; }
+    var id='fc_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+    var card={ id:id, type:'fv', front:'', back:'', text:'', statement:'', answer:true, image:'', occ:null,
+      modId:'', modName:'', topicId:'', topicTitle:'',
+      created:Date.now(), reviews:0, correct:0, diff:'novo', ease:2.5, interval:0, due:Date.now() };
+    for(var k in data){ card[k]=data[k]; }
+    UC()[id]=card; STT().created=(STT().created||0)+1; save();
+    return card;
+  }
+  function delCard(id){ var u=UC(); if(u[id]){ delete u[id]; save(); } }
+  function rate(c,q){
+    c.reviews=(c.reviews||0)+1; if(q>=2) c.correct=(c.correct||0)+1;
+    var e=(c.ease||2.5), iv=(c.interval||0);
+    if(q===0){ c.interval=0; c.ease=Math.max(1.3,e-0.2); c.diff='dificil'; c.due=Date.now()+10*60*1000; }
+    else if(q===2){ c.interval=iv<=0?1:Math.max(1,Math.round(iv*1.2)); c.ease=Math.max(1.3,e-0.15); c.diff='dificil'; c.due=Date.now()+c.interval*864e5; }
+    else if(q===3){ c.interval=iv<=0?1:Math.round(iv*e); c.diff='medio'; c.due=Date.now()+c.interval*864e5; }
+    else { c.interval=iv<=0?2:Math.round(iv*e*1.3); c.ease=e+0.05; c.diff='facil'; c.due=Date.now()+c.interval*864e5; }
+    STT().reviewed=(STT().reviewed||0)+1;
+    reward(q===0?'Revisei (errei)':'Flashcard revisado');
+    save();
+  }
+
+  function typeName(t){ return {fv:'Frente / Verso', qa:'Pergunta / Resposta', cloze:'Cloze (lacuna)', vf:'Verdadeiro ou Falso', img:'Imagem + Pergunta', occ:'Oclusão de Imagem'}[t]||t; }
+  function diffBadge(c){ if(mastered(c)) return '<span class="fcx-badge fcx-b-dom">dominado</span>'; var d=c.diff||'novo',cl={novo:'fcx-b-novo',dificil:'fcx-b-dificil',medio:'fcx-b-medio',facil:'fcx-b-facil'}[d]||'fcx-b-novo'; return '<span class="fcx-badge '+cl+'">'+d+'</span>'; }
+  function snippet(c){ var t=c.type==='cloze'?c.text:(c.type==='vf'?c.statement:(c.type==='occ'?(c.back||'Oclusão de imagem'):c.front)); t=(t||'').replace(/\{\{(.+?)\}\}/g,'$1'); return esc(t).slice(0,100)||'(cartão)'; }
+  function clozeMask(t){ return esc(t||'').replace(/\{\{(.+?)\}\}/g,'<span class="fcx-blank">&nbsp;</span>'); }
+  function clozeReveal(t){ return esc(t||'').replace(/\{\{(.+?)\}\}/g,'<span class="fcx-cloze">$1</span>'); }
+  function occHTML(c,reveal){
+    var u=safeUrl(c.image); if(!u) return '<div class="fcx-text">[imagem indisponível]</div>';
+    var o=c.occ||{x:0,y:0,w:0,h:0};
+    var box='<div class="'+(reveal?'fcx-occ-out':'fcx-occ-mask')+'" style="left:'+(o.x*100)+'%;top:'+(o.y*100)+'%;width:'+(o.w*100)+'%;height:'+(o.h*100)+'%"></div>';
+    return '<div class="fcx-occ-wrap"><img src="'+u+'" alt="">'+box+'</div>';
+  }
+  function frontHTML(c){
+    if(c.type==='cloze') return '<div class="fcx-text">'+clozeMask(c.text)+'</div>';
+    if(c.type==='vf') return '<div class="fcx-text">'+esc(c.statement||c.front||'')+'</div><div class="fcx-hint">Verdadeiro ou Falso?</div>';
+    if(c.type==='img'){ var u=safeUrl(c.image); return (u?'<img class="fcx-img" src="'+u+'" alt="">':'')+'<div class="fcx-text">'+esc(c.front||'')+'</div>'; }
+    if(c.type==='occ') return occHTML(c,false)+'<div class="fcx-text">'+esc(c.front||'O que está oculto?')+'</div>';
+    return '<div class="fcx-text">'+esc(c.front||'')+'</div>';
+  }
+  function backHTML(c){
+    if(c.type==='cloze') return '<div class="fcx-text">'+clozeReveal(c.text)+'</div>';
+    if(c.type==='vf') return '<div class="fcx-text"><b>'+(c.answer?'Verdadeiro':'Falso')+'</b>'+(c.back?' — '+esc(c.back):'')+'</div>';
+    if(c.type==='occ') return occHTML(c,true)+'<div class="fcx-text">'+esc(c.back||'')+'</div>';
+    return '<div class="fcx-text">'+esc(c.back||'')+'</div>';
+  }
+
+  function fieldsHTML(t){
+    if(t==='cloze') return '<textarea data-f="text" placeholder="Texto com a lacuna entre chaves duplas. Ex.: A tríade de Beck é {{hipotensão, turgência jugular, abafamento de bulhas}}."></textarea>';
+    if(t==='vf') return '<textarea data-f="statement" placeholder="Escreva a afirmação..."></textarea><div class="fcx-vf"><button type="button" data-v="true" class="on">Verdadeiro</button><button type="button" data-v="false">Falso</button></div><textarea data-f="back" placeholder="Explicação (opcional)"></textarea>';
+    if(t==='img') return '<input data-f="image" type="url" placeholder="Cole o link (URL) da imagem — https://..."><textarea data-f="front" placeholder="Pergunta sobre a imagem"></textarea><textarea data-f="back" placeholder="Resposta"></textarea>';
+    if(t==='occ') return '<input data-f="image" type="url" placeholder="Cole o link (URL) da imagem/print — https://..."><div class="fcx-occ-edit" data-occedit><div class="fcx-occ-hint">Cole o link acima — depois arraste sobre a imagem para ocultar uma parte.</div></div><textarea data-f="back" placeholder="Resposta: o que está na parte que você ocultou?"></textarea><input data-f="front" type="text" placeholder="Pergunta (opcional). Padrão: O que está oculto?">';
+    if(t==='qa') return '<textarea data-f="front" placeholder="Pergunta"></textarea><textarea data-f="back" placeholder="Resposta"></textarea>';
+    return '<textarea data-f="front" placeholder="Frente do cartão"></textarea><textarea data-f="back" placeholder="Verso do cartão"></textarea>';
+  }
+
+  /* ---- painel fixo dentro do tópico ---- */
+  function buildPanel(id){
+    var m=meta(id);
+    var panel=document.createElement('div'); panel.className='fcx-panel'; panel.setAttribute('data-fcxpanel', id);
+    panel.innerHTML=
+      '<div class="fcx-head"><div class="fcx-title">🗂️ Flashcards Inteligentes</div><div class="fcx-stat" data-stat></div></div>'+
+      '<div class="fcx-types" data-types>'+['fv','qa','cloze','vf','img','occ'].map(function(t,i){ return '<button type="button" data-t="'+t+'"'+(i===0?' class="on"':'')+'>'+typeName(t)+'</button>'; }).join('')+'</div>'+
+      '<div class="fcx-fields" data-fields>'+fieldsHTML('fv')+'</div>'+
+      '<div class="fcx-actions"><span class="fcx-key">Captura rápida — Ctrl+Enter salva <span class="fcx-saved" data-saved>salvo ✓</span></span><button type="button" class="fcx-save">Salvar flashcard</button></div>'+
+      '<details class="fcx-listwrap"><summary>Ver flashcards deste tópico (<span data-count>0</span>)</summary><div class="fcx-list" data-list></div><button type="button" class="fcx-revtopic">Revisar este tópico</button></details>';
+
+    var curType='fv', occRect=null;
+    var typesW=fq('[data-types]',panel), fieldsW=fq('[data-fields]',panel);
+    function bindVF(){ var vf=fq('.fcx-vf',fieldsW); if(vf) fa('button',vf).forEach(function(b){ b.onclick=function(){ fa('button',vf).forEach(function(x){x.classList.remove('on');}); b.classList.add('on'); }; }); }
+    function wireOcc(){
+      var edit=fq('[data-occedit]',fieldsW), urlI=fq('[data-f="image"]',fieldsW); if(!edit||!urlI) return;
+      function load(){
+        occRect=null; edit.innerHTML='';
+        var u=safeUrl(urlI.value); if(!u){ edit.innerHTML='<div class="fcx-occ-hint">Cole o link da imagem acima.</div>'; return; }
+        var wrap=document.createElement('div'); wrap.className='fcx-occ-wrap fcx-occ-draw';
+        var img=document.createElement('img'); img.src=u; img.alt='';
+        var sel=document.createElement('div'); sel.className='fcx-occ-mask'; sel.style.display='none';
+        wrap.appendChild(img); wrap.appendChild(sel);
+        var hint=document.createElement('div'); hint.className='fcx-occ-hint'; hint.textContent='Arraste sobre a imagem para ocultar a parte que quer testar.';
+        edit.appendChild(wrap); edit.appendChild(hint);
+        var draw=false,sx=0,sy=0;
+        function P(e){ var r=wrap.getBoundingClientRect(); var cx=e.touches?e.touches[0].clientX:e.clientX, cy=e.touches?e.touches[0].clientY:e.clientY; return {x:Math.max(0,Math.min(1,(cx-r.left)/r.width)), y:Math.max(0,Math.min(1,(cy-r.top)/r.height))}; }
+        function U(p){ var x=Math.min(sx,p.x),y=Math.min(sy,p.y),w=Math.abs(p.x-sx),h=Math.abs(p.y-sy); sel.style.display='block'; sel.style.left=(x*100)+'%'; sel.style.top=(y*100)+'%'; sel.style.width=(w*100)+'%'; sel.style.height=(h*100)+'%'; occRect={x:x,y:y,w:w,h:h}; }
+        function dn(e){ e.preventDefault(); draw=true; var p=P(e); sx=p.x; sy=p.y; U(p); }
+        function mv(e){ if(!draw) return; e.preventDefault(); U(P(e)); }
+        function up(){ if(!draw) return; draw=false; if(occRect&&(occRect.w<0.02||occRect.h<0.02)){ occRect=null; sel.style.display='none'; } }
+        wrap.addEventListener('mousedown',dn); window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+        wrap.addEventListener('touchstart',dn,{passive:false}); wrap.addEventListener('touchmove',mv,{passive:false}); wrap.addEventListener('touchend',up);
+      }
+      urlI.addEventListener('change',load); urlI.addEventListener('blur',load);
+    }
+    function renderFields(){ fieldsW.innerHTML=fieldsHTML(curType); bindVF(); if(curType==='occ') wireOcc(); var f=fq('textarea,input',fieldsW); if(f) f.focus(); }
+    fa('[data-t]',typesW).forEach(function(b){ b.onclick=function(){ curType=b.dataset.t; fa('button',typesW).forEach(function(x){ x.classList.toggle('on',x===b); }); renderFields(); }; });
+    bindVF();
+    function val(n){ var el=fq('[data-f="'+n+'"]',fieldsW); return el?el.value.trim():''; }
+    function doSave(){
+      var d={ type:curType, topicId:id, topicTitle:m.title, modName:m.mod, modId:m.mod };
+      if(curType==='cloze'){ if(!val('text')){ ptoast('Atenção','Escreva o texto do cartão.'); return; } if(!/\{\{.+?\}\}/.test(val('text'))){ ptoast('Atenção','Marque a lacuna com {{ }}.'); return; } d.text=val('text'); }
+      else if(curType==='vf'){ if(!val('statement')){ ptoast('Atenção','Escreva a afirmação.'); return; } d.statement=val('statement'); d.back=val('back'); var on=fq('.fcx-vf button.on',fieldsW); d.answer=on?(on.dataset.v==='true'):true; }
+      else if(curType==='img'){ if(!val('front')){ ptoast('Atenção','Escreva a pergunta.'); return; } d.image=safeUrl(val('image')); d.front=val('front'); d.back=val('back'); }
+      else if(curType==='occ'){ if(!safeUrl(val('image'))){ ptoast('Atenção','Cole o link de uma imagem.'); return; } if(!occRect){ ptoast('Atenção','Arraste sobre a imagem para marcar a parte oculta.'); return; } if(!val('back')){ ptoast('Atenção','Escreva a resposta.'); return; } d.image=safeUrl(val('image')); d.occ=occRect; d.back=val('back'); d.front=val('front')||'O que está oculto?'; }
+      else { if(!val('front')){ ptoast('Atenção','Preencha a frente do cartão.'); return; } d.front=val('front'); d.back=val('back'); }
+      if(!createCard(d)) return;
+      occRect=null; renderFields();
+      var sv=fq('[data-saved]',panel); if(sv){ sv.classList.add('show'); setTimeout(function(){ sv.classList.remove('show'); },1200); }
+      refresh(panel,id); updateFab();
+    }
+    fq('.fcx-save',panel).onclick=doSave;
+    fieldsW.addEventListener('keydown',function(e){ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); doSave(); } });
+    fq('.fcx-revtopic',panel).onclick=function(){ var d=forTopic(id).filter(due); openSession(d.length?d:forTopic(id)); };
+    refresh(panel,id);
+    return panel;
+  }
+  function refresh(panel,id){
+    var st=tStats(id), se=fq('[data-stat]',panel);
+    if(se) se.innerHTML='<span><b>'+st.total+'</b> total</span><span><b>'+st.dom+'</b> dominados</span><span><b>'+st.pend+'</b> pendentes</span>';
+    var cn=fq('[data-count]',panel); if(cn) cn.textContent=st.total;
+    var list=fq('[data-list]',panel); if(!list) return;
+    var a=forTopic(id).sort(function(x,y){ return y.created-x.created; });
+    if(!a.length){ list.innerHTML='<div class="fcx-empty" style="padding:14px">🗂️ Nenhum flashcard ainda neste tópico.</div>'; return; }
+    list.innerHTML=a.map(function(c){ return '<div class="fcx-item"><div class="fcx-q">'+snippet(c)+'<div class="fcx-meta">'+typeName(c.type)+' · '+c.reviews+' rev '+diffBadge(c)+'</div></div><button type="button" class="fcx-del" data-del="'+c.id+'" title="Excluir">✕</button></div>'; }).join('');
+    fa('[data-del]',list).forEach(function(b){ b.onclick=function(){ delCard(b.dataset.del); refresh(panel,id); updateFab(); }; });
+  }
+  function mountTopic(id){
+    if(!CFG.panelHost) return; var host=CFG.panelHost(); if(!host||!host.host) return;
+    if(fq('[data-fcxpanel]',host.host)) return;
+    var panel=buildPanel(id);
+    if(host.before && host.before.parentNode===host.host) host.host.insertBefore(panel, host.before);
+    else host.host.insertBefore(panel, host.host.firstChild);
+  }
+
+  /* ---- sessão de revisão ---- */
+  var SES={q:[],i:0};
+  function overlay(){
+    var o=fq('#fcxSession'); if(o) return o;
+    o=document.createElement('div'); o.id='fcxSession'; o.className='fcx-scrim';
+    o.innerHTML='<div class="fcx-modal"><button class="fcx-close" type="button">&times;</button><div class="fcx-prog" data-prog></div><div data-body></div></div>';
+    document.body.appendChild(o); o.addEventListener('click',function(e){ if(e.target===o) closeSes(); });
+    fq('.fcx-close',o).onclick=closeSes; return o;
+  }
+  function openSession(cards){ cards=(cards||[]).slice(); if(!cards.length){ ptoast('Tudo em dia','Nenhum flashcard para revisar agora.'); return; } SES={q:cards,i:0}; overlay().classList.add('show'); renderSes(); }
+  function closeSes(){ var o=fq('#fcxSession'); if(o) o.classList.remove('show'); updateFab(); refreshOpenPanel(); refreshCentral(); }
+  function renderSes(){
+    var o=overlay(), body=fq('[data-body]',o), prog=fq('[data-prog]',o);
+    if(SES.i>=SES.q.length){ prog.textContent=''; body.innerHTML='<div class="fcx-empty"><div style="font-size:38px">✅</div><h3>Sessão concluída!</h3><p>Você revisou '+SES.q.length+' flashcard'+(SES.q.length>1?'s':'')+'.</p></div><button type="button" class="fcx-big" data-done>Fechar</button>'; fq('[data-done]',body).onclick=closeSes; return; }
+    var c=SES.q[SES.i]; prog.textContent='Cartão '+(SES.i+1)+' de '+SES.q.length+(c.topicTitle?(' · '+c.topicTitle):'');
+    body.innerHTML='<div class="fcx-card">'+frontHTML(c)+'</div><button type="button" class="fcx-big" data-show>Mostrar resposta</button>';
+    fq('[data-show]',body).onclick=function(){
+      body.innerHTML='<div class="fcx-card">'+frontHTML(c)+'<hr class="fcx-hr">'+backHTML(c)+'</div><div class="fcx-rate"><button type="button" class="r-again" data-q="0">Errei</button><button type="button" class="r-hard" data-q="2">Difícil</button><button type="button" class="r-good" data-q="3">Médio</button><button type="button" class="r-easy" data-q="4">Fácil</button></div>';
+      fa('.fcx-rate button',body).forEach(function(b){ b.onclick=function(){ rate(c,+b.dataset.q); SES.i++; renderSes(); }; });
+    };
+  }
+
+  /* ---- Central (FAB) ---- */
+  function openCentral(){
+    var o=fq('#fcxCentral'); if(!o){ o=document.createElement('div'); o.id='fcxCentral'; o.className='fcx-scrim'; o.innerHTML='<div class="fcx-modal fcx-modal-lg"><button class="fcx-close" type="button">&times;</button><div data-cbody></div></div>'; document.body.appendChild(o); o.addEventListener('click',function(e){ if(e.target===o) o.classList.remove('show'); }); fq('.fcx-close',o).onclick=function(){ o.classList.remove('show'); }; }
+    renderCentral(); o.classList.add('show');
+  }
+  function refreshCentral(){ var o=fq('#fcxCentral'); if(o&&o.classList.contains('show')) renderCentral(); }
+  var FLT={mat:'',dif:'',q:''};
+  function renderCentral(){
+    var o=fq('#fcxCentral'); if(!o) return; var body=fq('[data-cbody]',o);
+    var all=arr(), dom=all.filter(mastered).length, pend=all.filter(due).length;
+    var rev=all.reduce(function(a,c){return a+(c.reviews||0);},0), cor=all.reduce(function(a,c){return a+(c.correct||0);},0), acc=rev?Math.round(cor/rev*100):0;
+    var h='<h2 class="fcx-h2">🗂️ Central de Flashcards</h2><p class="fcx-sub">Todos os cartões que você cria enquanto estuda, de todas as matérias, com revisão espaçada estilo Anki.</p>';
+    h+='<div class="fcx-tiles"><div class="fcx-tile"><b>'+all.length+'</b><span>no total</span></div><div class="fcx-tile"><b>'+dom+'</b><span>dominados</span></div><div class="fcx-tile"><b>'+pend+'</b><span>pendentes</span></div><div class="fcx-tile"><b>'+acc+'%</b><span>de acerto</span></div></div>';
+    h+='<button type="button" class="fcx-big" data-revall>Revisar pendentes ('+pend+')</button>';
+    if(!all.length){ body.innerHTML=h+'<div class="fcx-empty" style="margin-top:18px"><div style="font-size:38px">🗂️</div><p>Nenhum flashcard ainda. Abra um tópico e use a área <b>Flashcards Inteligentes</b> no topo da página.</p></div>'; fq('[data-revall]',body).onclick=function(){ openSession(dueCards()); }; return; }
+    var mats={}; all.forEach(function(c){ if(c.modName) mats[c.modName]=1; });
+    var matOpts=Object.keys(mats).map(function(mm){ return '<option value="'+esc(mm)+'"'+(FLT.mat===mm?' selected':'')+'>'+esc(mm)+'</option>'; }).join('');
+    h+='<div class="fcx-filters"><select data-fmat><option value="">Todas as matérias</option>'+matOpts+'</select><select data-fdif><option value="">Toda dificuldade</option><option value="novo">Novo</option><option value="dificil">Difícil</option><option value="medio">Médio</option><option value="facil">Fácil</option><option value="dom">Dominado</option></select><input data-fq type="text" placeholder="Buscar no conteúdo..." value="'+esc(FLT.q)+'"></div>';
+    h+='<div class="fcx-list" data-clist></div>';
+    h+='<h3 class="fcx-h3">Calendário de revisões</h3><div class="fcx-cal" data-cal></div>';
+    body.innerHTML=h;
+    fq('[data-revall]',body).onclick=function(){ openSession(dueCards()); };
+    var mat=fq('[data-fmat]',body), dif=fq('[data-fdif]',body), qf=fq('[data-fq]',body), list=fq('[data-clist]',body);
+    function apply(){ FLT={mat:mat.value,dif:dif.value,q:qf.value}; list.innerHTML=listHTML(FLT);
+      fa('[data-rev]',list).forEach(function(b){ b.onclick=function(){ var c=UC()[b.dataset.rev]; if(c) openSession([c]); }; });
+      fa('[data-del]',list).forEach(function(b){ if(b.dataset.del) b.onclick=function(){ delCard(b.dataset.del); apply(); updateFab(); }; });
+    }
+    mat.onchange=apply; dif.onchange=apply; qf.oninput=apply; apply();
+    fq('[data-cal]',body).innerHTML=calHTML();
+  }
+  function listHTML(f){
+    var a=arr().filter(function(c){
+      if(f.mat && c.modName!==f.mat) return false;
+      if(f.dif){ if(f.dif==='dom'){ if(!mastered(c)) return false; } else { if(mastered(c)) return false; if((c.diff||'novo')!==f.dif) return false; } }
+      if(f.q){ var hay=((c.front||'')+' '+(c.back||'')+' '+(c.text||'')+' '+(c.statement||'')+' '+(c.topicTitle||'')).toLowerCase(); if(hay.indexOf(f.q.toLowerCase())<0) return false; }
+      return true;
+    }).sort(function(x,y){ return (x.due||0)-(y.due||0); });
+    if(!a.length) return '<div class="fcx-empty" style="padding:22px">🔍 Nenhum cartão com esses filtros.</div>';
+    return a.map(function(c){ var dd=due(c)?'pendente':('em '+Math.max(0,Math.ceil(((c.due||0)-Date.now())/864e5))+'d'); var ac=c.reviews?Math.round((c.correct||0)/c.reviews*100):0;
+      return '<div class="fcx-item"><div class="fcx-q">'+snippet(c)+'<div class="fcx-meta">'+esc(c.modName||'')+(c.topicTitle?(' › '+esc(c.topicTitle)):'')+' · '+typeName(c.type)+' · '+c.reviews+' rev · '+ac+'% · '+dd+' '+diffBadge(c)+'</div></div><button type="button" class="fcx-rev" data-rev="'+c.id+'" title="Revisar">↻</button><button type="button" class="fcx-del" data-del="'+c.id+'" title="Excluir">✕</button></div>'; }).join('');
+  }
+  function calHTML(){
+    var base=new Date(); base.setHours(0,0,0,0); var cards=arr(), wd=['dom','seg','ter','qua','qui','sex','sáb'], h='';
+    for(var i=0;i<14;i++){ var ds=base.getTime()+i*864e5, de=ds+864e5; var n=cards.filter(function(c){ var d=c.due||0; return i===0?(d<de):(d>=ds&&d<de); }).length; var dt=new Date(ds); h+='<div class="fcx-d'+(n>0?' has':'')+'"><span>'+wd[dt.getDay()]+'</span><b>'+dt.getDate()+'</b><span>'+(n>0?n:'·')+'</span></div>'; }
+    return h;
+  }
+
+  function refreshOpenPanel(){ var p=fq('[data-fcxpanel]'); if(p) refresh(p, p.getAttribute('data-fcxpanel')); }
+
+  /* ---- FAB + init ---- */
+  function updateFab(){ var f=fq('#fcxFab'); if(!f) return; var n=dueCards().length; var b=fq('[data-fabbadge]',f); if(b){ b.textContent=n; b.style.display=n>0?'flex':'none'; } }
+  function initFab(){ if(fq('#fcxFab')) return; var f=document.createElement('button'); f.id='fcxFab'; f.type='button'; f.title='Central de Flashcards'; f.innerHTML='<span>🗂️</span><span class="fcx-fabbadge" data-fabbadge>0</span>'; f.onclick=openCentral; document.body.appendChild(f); updateFab(); }
+
+  function injectCSS(){
+    if(fq('#fcxCSS')) return; var st=document.createElement('style'); st.id='fcxCSS';
+    st.textContent=[
+'.fcx-panel{--a:#8b7cf6;--a2:#38bdf8;border:1px solid rgba(139,124,246,.45);background:linear-gradient(180deg,rgba(139,124,246,.10),transparent 70%),#161b22;border-radius:14px;padding:14px 15px;margin:14px 0 18px;color:#e7eef5;font-family:inherit}',
+'.fcx-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}',
+'.fcx-title{font-weight:700;font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;color:#a78bfa}',
+'.fcx-stat{font-size:12px;color:#9fb0c0;display:flex;gap:10px;flex-wrap:wrap}.fcx-stat b{color:#e7eef5}',
+'.fcx-types{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:9px}',
+'.fcx-types button{font-size:11.5px;font-weight:600;padding:6px 11px;border-radius:20px;border:1px solid #2b3442;background:#1a212b;color:#9fb0c0;cursor:pointer}',
+'.fcx-types button.on{background:rgba(139,124,246,.18);color:#c4b5fd;border-color:rgba(139,124,246,.5)}',
+'.fcx-fields{display:flex;flex-direction:column;gap:8px}',
+'.fcx-fields textarea,.fcx-fields input{width:100%;box-sizing:border-box;background:#1a212b;border:1px solid #2b3442;border-radius:10px;color:#e7eef5;font-family:inherit;font-size:14px;padding:10px 12px;outline:none;resize:vertical}',
+'.fcx-fields textarea{min-height:46px}',
+'.fcx-fields textarea:focus,.fcx-fields input:focus{border-color:#8b7cf6;box-shadow:0 0 0 3px rgba(139,124,246,.18)}',
+'.fcx-vf{display:flex;gap:8px}.fcx-vf button{flex:1;padding:9px;border-radius:10px;border:1px solid #2b3442;background:#1a212b;color:#9fb0c0;font-weight:700;cursor:pointer}',
+'.fcx-vf button.on[data-v="true"]{background:rgba(52,211,153,.18);color:#34d399;border-color:#34d399}',
+'.fcx-vf button.on[data-v="false"]{background:rgba(251,113,133,.18);color:#fb7185;border-color:#fb7185}',
+'.fcx-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;flex-wrap:wrap}',
+'.fcx-key{font-size:11px;color:#6b7b8c}.fcx-saved{color:#34d399;font-weight:700;opacity:0;transition:opacity .2s}.fcx-saved.show{opacity:1}',
+'.fcx-save{font-size:13px;font-weight:700;padding:9px 16px;border-radius:11px;border:0;background:linear-gradient(135deg,#8b7cf6,#38bdf8);color:#fff;cursor:pointer}',
+'.fcx-listwrap{margin-top:12px;border-top:1px solid #222a35;padding-top:10px}',
+'.fcx-listwrap summary{cursor:pointer;font-size:12.5px;color:#9fb0c0;font-weight:600}',
+'.fcx-list{display:flex;flex-direction:column;gap:8px;margin:10px 0}',
+'.fcx-item{display:flex;align-items:flex-start;gap:8px;background:#1a212b;border:1px solid #2b3442;border-radius:10px;padding:10px 12px}',
+'.fcx-q{flex:1;min-width:0;font-size:13px;color:#e7eef5;word-break:break-word}',
+'.fcx-meta{font-size:11px;color:#6b7b8c;margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}',
+'.fcx-badge{font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:20px;white-space:nowrap}',
+'.fcx-b-novo{background:rgba(96,165,250,.18);color:#60a5fa}.fcx-b-dificil{background:rgba(251,113,133,.18);color:#fb7185}',
+'.fcx-b-medio{background:rgba(251,191,36,.18);color:#fbbf24}.fcx-b-facil{background:rgba(52,211,153,.18);color:#34d399}',
+'.fcx-b-dom{background:rgba(52,211,153,.2);color:#34d399;border:1px solid #34d399}',
+'.fcx-del,.fcx-rev{background:none;border:0;color:#6b7b8c;cursor:pointer;padding:4px 7px;border-radius:8px;flex-shrink:0;font-size:15px;line-height:1}',
+'.fcx-del:hover{color:#fb7185;background:rgba(251,113,133,.15)}.fcx-rev{color:#a78bfa}.fcx-rev:hover{background:rgba(139,124,246,.15)}',
+'.fcx-revtopic{width:100%;margin-top:4px;font-size:13px;font-weight:700;padding:10px;border-radius:11px;border:1px solid rgba(139,124,246,.4);background:rgba(139,124,246,.14);color:#c4b5fd;cursor:pointer}',
+'.fcx-occ-edit{margin-top:2px}.fcx-occ-wrap{position:relative;display:inline-block;max-width:100%;line-height:0}.fcx-occ-wrap img{max-width:100%;display:block;border-radius:8px}',
+'.fcx-occ-draw{cursor:crosshair;touch-action:none}',
+'.fcx-occ-mask{position:absolute;background:#8b7cf6;border:2px solid #fff;border-radius:3px;box-shadow:0 0 0 1px #8b7cf6}',
+'.fcx-occ-out{position:absolute;border:2px dashed #34d399;background:rgba(52,211,153,.15);border-radius:3px}',
+'.fcx-occ-hint{font-size:11px;color:#6b7b8c;margin-top:6px}',
+'.fcx-scrim{position:fixed;inset:0;z-index:99999;display:none;place-items:center;padding:18px;background:rgba(4,8,11,.82);backdrop-filter:blur(6px)}',
+'.fcx-scrim.show{display:grid}',
+'.fcx-modal{width:100%;max-width:560px;background:#11161d;border:1px solid #2b3442;border-radius:16px;padding:22px;position:relative;max-height:90vh;overflow-y:auto;color:#e7eef5;font-family:inherit}',
+'.fcx-modal-lg{max-width:760px}',
+'.fcx-close{position:absolute;top:10px;right:14px;background:none;border:0;color:#6b7b8c;font-size:26px;line-height:1;cursor:pointer}',
+'.fcx-prog{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b7b8c;font-weight:700;margin-bottom:12px;padding-right:30px}',
+'.fcx-card{min-height:120px;display:flex;flex-direction:column;justify-content:center;gap:10px;background:#1a212b;border:1px solid #2b3442;border-radius:12px;padding:20px;margin-bottom:14px}',
+'.fcx-text{font-size:16px;color:#e7eef5;line-height:1.5}.fcx-hint{font-size:12px;color:#6b7b8c}.fcx-img{max-width:100%;border-radius:8px}',
+'.fcx-blank{display:inline-block;min-width:64px;border-bottom:2px solid #8b7cf6;vertical-align:middle}',
+'.fcx-cloze{background:rgba(139,124,246,.2);color:#c4b5fd;font-weight:700;padding:0 5px;border-radius:4px}',
+'.fcx-hr{border:0;border-top:1px solid #222a35;margin:12px 0 0}',
+'.fcx-rate{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}',
+'.fcx-rate button{padding:12px 4px;border-radius:10px;border:1px solid #2b3442;background:#1a212b;font-weight:700;font-size:12.5px;cursor:pointer;color:#e7eef5}',
+'.fcx-rate .r-again{border-color:#fb7185;color:#fb7185}.fcx-rate .r-hard{border-color:#fbbf24;color:#fbbf24}',
+'.fcx-rate .r-good{border-color:#60a5fa;color:#60a5fa}.fcx-rate .r-easy{border-color:#34d399;color:#34d399}',
+'.fcx-big{width:100%;box-sizing:border-box;font-size:14px;font-weight:700;padding:12px;border-radius:11px;border:0;background:linear-gradient(135deg,#8b7cf6,#38bdf8);color:#fff;cursor:pointer}',
+'.fcx-empty{text-align:center;color:#6b7b8c}.fcx-empty h3{color:#9fb0c0;margin:8px 0 6px}',
+'.fcx-h2{font-size:22px;margin:0 0 4px;color:#e7eef5}.fcx-sub{color:#9fb0c0;font-size:13px;margin:0 0 16px}',
+'.fcx-h3{font-size:15px;margin:18px 0 10px;color:#e7eef5}',
+'.fcx-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}',
+'.fcx-tile{background:#1a212b;border:1px solid #2b3442;border-radius:12px;padding:14px;text-align:center}.fcx-tile b{display:block;font-size:22px;color:#c4b5fd}.fcx-tile span{font-size:11px;color:#9fb0c0}',
+'.fcx-filters{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 14px}',
+'.fcx-filters select,.fcx-filters input{background:#11161d;border:1px solid #2b3442;border-radius:10px;color:#e7eef5;font-size:13px;padding:9px 12px;outline:none}.fcx-filters input{flex:1;min-width:150px}',
+'.fcx-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}',
+'.fcx-d{aspect-ratio:1;border-radius:9px;background:#1a212b;border:1px solid #222a35;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10px;color:#6b7b8c;gap:1px}',
+'.fcx-d.has{background:rgba(139,124,246,.18);border-color:#8b7cf6;color:#c4b5fd}.fcx-d b{font-size:14px;color:#e7eef5}',
+'#fcxFab{position:fixed;right:18px;bottom:18px;z-index:99998;width:56px;height:56px;border-radius:50%;border:0;background:linear-gradient(135deg,#8b7cf6,#38bdf8);color:#fff;font-size:24px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center}',
+'.fcx-fabbadge{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#fb7185;color:#fff;font-size:11px;font-weight:800;display:none;align-items:center;justify-content:center}'
+    ].join('\n');
+    document.head.appendChild(st);
+  }
+
+  function init(){ injectCSS(); initFab(); if(CFG.installHook) CFG.installHook(mountTopic); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
+
+  window.FCX={ open:openCentral, due:dueCards, mount:mountTopic };
+})();
+
+</script>
 </body>
 </html>
